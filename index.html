@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Stats</title>
+<style>
+  /* ====== COLORS: change these to your school's colors ====== */
+  :root {
+    --home: #b3121f;        /* home team color */
+    --visitor: #1f3a93;     /* visitor team color */
+    --bg: #f3f4f6;
+    --card: #ffffff;
+    --ink: #111827;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --live: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--ink); font-size: 15px; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 12px; }
+
+  /* Scorebug */
+  .bug { background: #0f172a; color: #fff; border-radius: 14px; padding: 16px 18px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; }
+  .side { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .side.home { flex-direction: row-reverse; text-align: right; }
+  .logo { width: 56px; height: 56px; border-radius: 50%; flex: none; display: grid; place-items: center; font-weight: 800; font-size: 17px; color: #fff; overflow: hidden; }
+  .logo img { width: 100%; height: 100%; object-fit: contain; background: #fff; }
+  .tname { font-weight: 700; font-size: 18px; line-height: 1.15; overflow: hidden; text-overflow: ellipsis; }
+  .trec { color: #94a3b8; font-size: 13px; }
+  .score { font-size: 46px; font-weight: 800; font-variant-numeric: tabular-nums; margin-left: auto; }
+  .side.home .score { margin-left: 0; margin-right: auto; }
+  .mid { text-align: center; min-width: 110px; }
+  .period { font-weight: 700; font-size: 15px; letter-spacing: .04em; }
+  .clock { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .badge { display: inline-block; margin-top: 4px; font-size: 11px; font-weight: 700; letter-spacing: .08em; padding: 2px 8px; border-radius: 99px; background: var(--live); }
+  .badge.final { background: #475569; }
+  .badge.pre { background: #0369a1; }
+
+  .meta { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px; color: var(--muted); font-size: 12.5px; margin: 8px 4px 12px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #16a34a; margin-right: 5px; vertical-align: 1px; }
+  .dot.stale { background: #f59e0b; }
+  .dot.err { background: var(--live); }
+
+  .card { background: var(--card); border-radius: 12px; border: 1px solid var(--line); margin-bottom: 12px; overflow: hidden; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0; padding: 12px 14px 8px; }
+
+  .tabs { display: flex; gap: 4px; padding: 4px; background: #e5e7eb; border-radius: 10px; margin-bottom: 12px; }
+  .tabs button { flex: 1; border: 0; background: transparent; padding: 9px 6px; border-radius: 7px; font: inherit; font-weight: 600; color: #374151; cursor: pointer; }
+  .tabs button.on { background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.12); color: var(--ink); }
+  .subtabs { display: flex; gap: 6px; padding: 10px 14px 0; flex-wrap: wrap; }
+  .subtabs button { border: 1px solid var(--line); background: #fff; border-radius: 99px; padding: 6px 14px; font: inherit; font-size: 14px; cursor: pointer; }
+  .subtabs button.on { color: #fff; border-color: transparent; }
+
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { padding: 7px 8px; text-align: center; white-space: nowrap; border-bottom: 1px solid var(--line); }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; background: #f9fafb; }
+  td.l, th.l { text-align: left; }
+  td.name { text-align: left; font-weight: 600; position: sticky; left: 0; background: var(--card); }
+  th.name { position: sticky; left: 0; }
+  tr.tot td { font-weight: 700; background: #f9fafb; }
+  tr.tot td.name { background: #f9fafb; }
+  .on-court { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #16a34a; margin-left: 5px; vertical-align: 2px; }
+  .num { color: var(--muted); font-weight: 500; margin-right: 4px; }
+
+  /* Linescore */
+  .ls td.t { text-align: left; font-weight: 700; }
+  .ls td.f { font-weight: 800; }
+  .chip { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+
+  /* Team stat comparison */
+  .cmp { padding: 6px 14px 14px; }
+  .cmp-row { display: grid; grid-template-columns: 60px 1fr 60px; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+  .cmp-row:last-child { border-bottom: 0; }
+  .cmp-row .v { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .cmp-row .v.r { text-align: right; }
+  .cmp-label { text-align: center; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  .bar { display: flex; height: 7px; border-radius: 99px; overflow: hidden; background: var(--line); gap: 2px; }
+
+  /* Play-by-play */
+  .pbp-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 14px 4px; }
+  .pbp-tools select, .pbp-tools label { font: inherit; font-size: 14px; }
+  .pbp-tools select { padding: 5px 8px; border-radius: 7px; border: 1px solid var(--line); }
+  .plays { list-style: none; margin: 0; padding: 0; }
+  .plays li { display: grid; grid-template-columns: 52px 6px 1fr auto; gap: 10px; align-items: center; padding: 9px 14px; border-bottom: 1px solid var(--line); }
+  .plays li.scoring { background: #fefce8; }
+  .plays li.scoring .txt { font-weight: 600; }
+  .plays .tm { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px; }
+  .plays .stripe { width: 6px; height: 100%; min-height: 22px; border-radius: 3px; }
+  .plays .sc { font-weight: 700; font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); }
+  .plays li.scoring .sc { color: var(--ink); }
+  .prd-head { background: #f9fafb; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 6px 14px !important; display: block !important; }
+  .empty { padding: 24px; text-align: center; color: var(--muted); }
+
+  .hidden { display: none !important; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 10px 0 24px; }
+
+  @media (max-width: 640px) {
+    .bug { padding: 12px; gap: 8px; }
+    .logo { width: 38px; height: 38px; font-size: 13px; }
+    .tname { font-size: 14px; }
+    .trec { display: none; }
+    .score { font-size: 32px; }
+    .clock { font-size: 20px; }
+    .mid { min-width: 70px; }
+    .side { flex-direction: column; gap: 4px; text-align: center; }
+    .side.home { flex-direction: column; text-align: center; }
+    .score, .side.home .score { margin: 0; }
+    th, td { padding: 6px 6px; font-size: 13.5px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="bug" id="bug">
+    <div class="side visitor">
+      <div class="logo" id="vLogo" style="background:var(--visitor)">V</div>
+      <div style="min-width:0"><div class="tname" id="vName">Visitor</div><div class="trec" id="vRec"></div></div>
+      <div class="score" id="vScore">–</div>
+    </div>
+    <div class="mid">
+      <div class="period" id="period">Loading…</div>
+      <div class="clock" id="clock"></div>
+      <div class="badge pre" id="badge">PREGAME</div>
+    </div>
+    <div class="side home">
+      <div class="logo" id="hLogo" style="background:var(--home)">H</div>
+      <div style="min-width:0"><div class="tname" id="hName">Home</div><div class="trec" id="hRec"></div></div>
+      <div class="score" id="hScore">–</div>
+    </div>
+  </div>
+
+  <div class="meta">
+    <span id="venue"></span>
+    <span id="conn"><span class="dot" id="connDot"></span><span id="connText">Connecting…</span></span>
+  </div>
+
+  <div class="card"><div class="scroll"><table class="ls" id="linescore"></table></div></div>
+
+  <div class="tabs" role="tablist">
+    <button class="on" data-tab="box">Box Score</button>
+    <button data-tab="team">Team Stats</button>
+    <button data-tab="pbp">Play-by-Play</button>
+  </div>
+
+  <section id="tab-box">
+    <div class="card">
+      <div class="subtabs" id="boxTeams"></div>
+      <div id="boxBody"></div>
+    </div>
+  </section>
+
+  <section id="tab-team" class="hidden">
+    <div class="card"><h2>Team comparison</h2><div class="cmp" id="cmp"></div></div>
+  </section>
+
+  <section id="tab-pbp" class="hidden">
+    <div class="card">
+      <div class="pbp-tools">
+        <select id="pbpPeriod"><option value="all">All periods</option></select>
+        <label><input type="checkbox" id="pbpScoring"> Scoring plays only</label>
+      </div>
+      <ul class="plays" id="plays"></ul>
+    </div>
+  </section>
+
+  <footer>Updates automatically every few seconds — no need to refresh.</footer>
+</div>
+
+<script>
+/* =====================================================================
+   SETTINGS — the only part you normally need to edit
+   ===================================================================== */
+const CONFIG = {
+  // Where the live XML lives. Can be overridden with ?feed=URL in the address bar.
+  DATA_URL: "bbgame.xml",
+  // How often to check for updates (seconds).
+  POLL_SECONDS: 10,
+  // Optional logo images, keyed by the team id in the XML (e.g. "RAV").
+  // Leave empty to show a colored circle with the team abbreviation.
+  LOGOS: {
+    // "RAV": "logos/ravenna.png",
+  },
+  // Page title prefix
+  TITLE: "Live Stats",
+};
+/* ===================================================================== */
+
+const params = new URLSearchParams(location.search);
+const FEED = params.get("feed") || CONFIG.DATA_URL;
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const A = (el, name, def = "") => (el && el.getAttribute(name) != null ? el.getAttribute(name) : def);
+const N = (el, name) => { const v = parseFloat(A(el, name, "0")); return isNaN(v) ? 0 : v; };
+
+let lastText = null, lastOK = 0, model = null;
+let ui = { tab: "box", boxTeam: "V" };
+
+/* ---------------- Parsing ---------------- */
+function prettyName(check) {
+  if (!check) return "";
+  if (check.toUpperCase() === "TEAM") return "Team";
+  const [last, first] = check.split(",").map(s => s.trim());
+  const cap = s => s.toLowerCase().replace(/(^|[\s\-'])([a-z])/g, (m, a, b) => a + b.toUpperCase());
+  return first ? `${cap(first)} ${cap(last)}` : cap(last);
+}
+function formalName(name) { // "Last, First" -> "First Last"
+  if (!name) return "";
+  const p = name.split(",").map(s => s.trim());
+  return p.length > 1 ? `${p[1]} ${p[0]}` : name;
+}
+
+function parse(text) {
+  const doc = new DOMParser().parseFromString(text, "application/xml");
+  if (doc.querySelector("parsererror")) throw new Error("XML not complete yet");
+  const root = doc.documentElement;
+  const sport = root.nodeName.toLowerCase();       // bbgame, fbgame, sogame, vbgame, bsgame...
+  const venue = root.querySelector("venue");
+  const rules = root.querySelector("venue rules, rules");
+  const status = root.querySelector("status");
+
+  const teams = [...root.querySelectorAll(":scope > team")].map(t => {
+    const ls = t.querySelector("linescore");
+    return {
+      el: t,
+      vh: A(t, "vh"),
+      id: A(t, "id") || A(t, "abb"),
+      name: A(t, "name"),
+      record: A(t, "record"),
+      score: ls ? A(ls, "score", "0") : "0",
+      lines: ls ? [...ls.querySelectorAll("lineprd")].map(p => ({ prd: A(p, "prd"), score: A(p, "score") })) : [],
+      totals: t.querySelector(":scope > totals"),
+      players: [...t.querySelectorAll(":scope > player")].filter(p => A(p, "uni") !== "TM" && A(p, "name").toUpperCase() !== "TEAM"),
+    };
+  });
+
+  const plays = [];
+  const playsRoot = root.querySelector(":scope > plays");
+  if (playsRoot) {
+    playsRoot.querySelectorAll("play").forEach(p => {
+      const parent = p.closest("period, qtr, quarter, half, inning, set") || p.parentElement;
+      plays.push({ el: p, period: A(parent, "number", A(p, "prd", A(p, "period", ""))) });
+    });
+  }
+  return { sport, venue, rules, status, teams, plays };
+}
+
+/* ---------------- Labels ---------------- */
+function periodLabel(m, n) {
+  n = parseInt(n, 10);
+  if (!n) return "";
+  const prds = parseInt(A(m.rules, "prds", m.sport === "bbgame" ? "2" : "4"), 10) || 4;
+  const qh = A(m.rules, "qh", prds === 2 ? "H" : "Q");
+  if (n > prds) return (n - prds > 1 ? (n - prds) : "") + "OT";
+  const ord = ["", "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th"][n] || n + "th";
+  if (m.sport === "bsgame" || m.sport === "sbgame") return ord + " Inn";
+  if (m.sport === "vbgame") return "Set " + n;
+  return qh === "H" ? ord + " Half" : ord + " Qtr";
+}
+function shortPeriod(m, n) {
+  const l = periodLabel(m, n);
+  return l.replace(" Half", "").replace(" Qtr", "").replace(" Inn", "").replace("Set ", "");
+}
+
+/* ---------------- Render: header ---------------- */
+function team(m, vh) { return m.teams.find(t => t.vh === vh) || m.teams[vh === "V" ? 0 : 1] || { name: "", lines: [], players: [] }; }
+
+function logoHTML(t) {
+  const src = CONFIG.LOGOS[t.id];
+  if (src) return `<img src="${esc(src)}" alt="">`;
+  return esc((t.id || t.name || "?").slice(0, 4));
+}
+
+function renderHeader(m) {
+  const v = team(m, "V"), h = team(m, "H");
+  $("vName").textContent = v.name; $("hName").textContent = h.name;
+  $("vRec").textContent = v.record ? `(${v.record})` : ""; $("hRec").textContent = h.record ? `(${h.record})` : "";
+  $("vScore").textContent = v.score; $("hScore").textContent = h.score;
+  $("vLogo").innerHTML = logoHTML(v); $("hLogo").innerHTML = logoHTML(h);
+
+  const s = m.status;
+  const complete = A(s, "complete") === "Y";
+  const prd = A(s, "period", A(s, "qtr", ""));
+  const clock = A(s, "clock", "");
+  const badge = $("badge");
+  const started = m.plays.length > 0 || Number(v.score) + Number(h.score) > 0;
+  if (complete) { $("period").textContent = "FINAL" + (parseInt(prd) > parseInt(A(m.rules, "prds", "99")) ? "/" + shortPeriod(m, prd) : ""); $("clock").textContent = ""; badge.textContent = "FINAL"; badge.className = "badge final"; }
+  else if (!started) { $("period").textContent = A(m.venue, "time", ""); $("clock").textContent = ""; badge.textContent = "PREGAME"; badge.className = "badge pre"; }
+  else {
+    $("period").textContent = periodLabel(m, prd);
+    $("clock").textContent = clock === "00:00" ? "End" : clock.replace(/^0(\d)/, "$1");
+    badge.textContent = "LIVE"; badge.className = "badge";
+  }
+  document.title = `${v.id || v.name} ${v.score}, ${h.id || h.name} ${h.score} | ${CONFIG.TITLE}`;
+
+  const ven = m.venue;
+  $("venue").textContent = [A(ven, "date"), A(ven, "location"), A(ven, "attend") ? "Att: " + A(ven, "attend") : ""].filter(Boolean).join(" · ");
+}
+
+function renderLinescore(m) {
+  const v = team(m, "V"), h = team(m, "H");
+  const n = Math.max(v.lines.length, h.lines.length, parseInt(A(m.rules, "prds", "0")) || 0);
+  let head = `<tr><th class="l"></th>`;
+  for (let i = 1; i <= n; i++) head += `<th>${esc(shortPeriod(m, i))}</th>`;
+  head += `<th>T</th></tr>`;
+  const row = (t, color) => {
+    let r = `<tr><td class="t"><span class="chip" style="background:${color}"></span>${esc(t.name)}</td>`;
+    for (let i = 0; i < n; i++) r += `<td>${esc(t.lines[i] ? t.lines[i].score : "")}</td>`;
+    return r + `<td class="f">${esc(t.score)}</td></tr>`;
+  };
+  $("linescore").innerHTML = head + row(v, "var(--visitor)") + row(h, "var(--home)");
+}
+
+/* ---------------- Render: box score ---------------- */
+const BB_COLS = [
+  ["MIN", s => A(s, "min", "")],
+  ["FG", s => `${N(s, "fgm")}-${N(s, "fga")}`],
+  ["3PT", s => `${N(s, "fgm3")}-${N(s, "fga3")}`],
+  ["FT", s => `${N(s, "ftm")}-${N(s, "fta")}`],
+  ["OREB", s => N(s, "oreb")],
+  ["DREB", s => N(s, "dreb")],
+  ["REB", s => N(s, "treb")],
+  ["AST", s => N(s, "ast")],
+  ["STL", s => N(s, "stl")],
+  ["BLK", s => N(s, "blk")],
+  ["TO", s => N(s, "to")],
+  ["PF", s => N(s, "pf")],
+  ["PTS", s => N(s, "tp")],
+];
+
+function renderBoxTeams(m) {
+  const v = team(m, "V"), h = team(m, "H");
+  $("boxTeams").innerHTML = [["V", v, "var(--visitor)"], ["H", h, "var(--home)"]].map(([vh, t, c]) =>
+    `<button data-vh="${vh}" class="${ui.boxTeam === vh ? "on" : ""}" style="${ui.boxTeam === vh ? "background:" + c : ""}">${esc(t.name)}</button>`).join("");
+  $("boxTeams").querySelectorAll("button").forEach(b => b.onclick = () => { ui.boxTeam = b.dataset.vh; renderBox(model); });
+}
+
+function renderBox(m) {
+  renderBoxTeams(m);
+  const t = team(m, ui.boxTeam);
+  if (m.sport === "bbgame") return renderBasketballBox(t);
+  renderGenericBox(t);
+}
+
+function renderBasketballBox(t) {
+  const starters = t.players.filter(p => A(p, "gs") === "1");
+  const bench = t.players.filter(p => A(p, "gs") !== "1" && A(p, "gp", "1") !== "0");
+  const head = `<tr><th class="name l">Player</th>${BB_COLS.map(c => `<th>${c[0]}</th>`).join("")}</tr>`;
+  const row = p => {
+    const s = p.querySelector("stats");
+    return `<tr><td class="name"><span class="num">${esc(A(p, "uni"))}</span>${esc(formalName(A(p, "name")))}${A(p, "oncourt") === "Y" ? '<span class="on-court" title="On the floor"></span>' : ""}</td>${BB_COLS.map(c => `<td>${esc(c[1](s))}</td>`).join("")}</tr>`;
+  };
+  const sub = label => `<tr><td class="name l" style="color:var(--muted);font-size:12px;font-weight:700">${label}</td>${BB_COLS.map(() => "<td></td>").join("")}</tr>`;
+  const ts = t.totals && t.totals.querySelector("stats");
+  const tot = ts ? `<tr class="tot"><td class="name">Totals</td>${BB_COLS.map(c => `<td>${esc(c[0] === "MIN" ? "" : c[1](ts))}</td>`).join("")}</tr>` : "";
+  const pct = ts ? `<tr><td class="name" style="color:var(--muted)">FG% / 3P% / FT%</td><td colspan="${BB_COLS.length}" class="l" style="color:var(--muted)">${pctStr(ts, "fgm", "fga")} · ${pctStr(ts, "fgm3", "fga3")} · ${pctStr(ts, "ftm", "fta")}</td></tr>` : "";
+  $("boxBody").innerHTML = `<div class="scroll"><table>${head}${starters.length ? sub("STARTERS") + starters.map(row).join("") : ""}${bench.length ? sub("BENCH") + bench.map(row).join("") : ""}${(!starters.length && !bench.length) ? t.players.map(row).join("") : ""}${tot}${pct}</table></div>`;
+}
+function pctStr(s, m, a) { const x = N(s, a); return x ? (100 * N(s, m) / x).toFixed(1) + "%" : "–"; }
+
+// Any other sport: build one table per stat category found under <player> (e.g. rush, pass, rcv, def, shots, attack…)
+function renderGenericBox(t) {
+  const cats = new Map();
+  t.players.forEach(p => [...p.children].forEach(c => {
+    if (!cats.has(c.nodeName)) cats.set(c.nodeName, new Set());
+    [...c.attributes].forEach(a => cats.get(c.nodeName).add(a.name));
+  }));
+  if (!cats.size) { $("boxBody").innerHTML = `<div class="empty">No player stats yet.</div>`; return; }
+  let html = "";
+  for (const [cat, attrSet] of cats) {
+    const cols = [...attrSet];
+    const rows = t.players.filter(p => p.querySelector(":scope > " + cat));
+    html += `<h2>${esc(cat)}</h2><div class="scroll"><table><tr><th class="name l">Player</th>${cols.map(c => `<th>${esc(c.toUpperCase())}</th>`).join("")}</tr>`;
+    rows.forEach(p => {
+      const s = p.querySelector(":scope > " + cat);
+      html += `<tr><td class="name"><span class="num">${esc(A(p, "uni"))}</span>${esc(formalName(A(p, "name")))}</td>${cols.map(c => `<td>${esc(A(s, c))}</td>`).join("")}</tr>`;
+    });
+    const ts = t.totals && t.totals.querySelector(":scope > " + cat);
+    if (ts) html += `<tr class="tot"><td class="name">Totals</td>${cols.map(c => `<td>${esc(A(ts, c))}</td>`).join("")}</tr>`;
+    html += `</table></div>`;
+  }
+  $("boxBody").innerHTML = html;
+}
+
+/* ---------------- Render: team comparison ---------------- */
+function renderTeamStats(m) {
+  const v = team(m, "V"), h = team(m, "H");
+  const vs = v.totals && (v.totals.querySelector("stats") || v.totals.firstElementChild);
+  const hs = h.totals && (h.totals.querySelector("stats") || h.totals.firstElementChild);
+  if (!vs || !hs) { $("cmp").innerHTML = `<div class="empty">No team totals yet.</div>`; return; }
+  let rows;
+  if (m.sport === "bbgame") {
+    const pct = (s, a, b) => N(s, b) ? +(100 * N(s, a) / N(s, b)).toFixed(1) : 0;
+    rows = [
+      ["Field goals", s => `${N(s, "fgm")}-${N(s, "fga")}`, s => N(s, "fgm")],
+      ["FG %", s => pct(s, "fgm", "fga") + "%", s => pct(s, "fgm", "fga")],
+      ["3-pointers", s => `${N(s, "fgm3")}-${N(s, "fga3")}`, s => N(s, "fgm3")],
+      ["Free throws", s => `${N(s, "ftm")}-${N(s, "fta")}`, s => N(s, "ftm")],
+      ["Rebounds", s => N(s, "treb"), s => N(s, "treb")],
+      ["Offensive reb.", s => N(s, "oreb"), s => N(s, "oreb")],
+      ["Assists", s => N(s, "ast"), s => N(s, "ast")],
+      ["Steals", s => N(s, "stl"), s => N(s, "stl")],
+      ["Blocks", s => N(s, "blk"), s => N(s, "blk")],
+      ["Turnovers", s => N(s, "to"), s => N(s, "to")],
+      ["Fouls", s => N(s, "pf"), s => N(s, "pf")],
+    ];
+  } else {
+    rows = [...vs.attributes].map(a => [a.name.toUpperCase(), s => A(s, a.name), s => N(s, a.name)]);
+  }
+  $("cmp").innerHTML = rows.map(([label, fmt, val]) => {
+    const a = val(vs), b = val(hs), total = a + b || 1;
+    return `<div class="cmp-row"><div class="v">${esc(fmt(vs))}</div><div><div class="cmp-label">${esc(label)}</div><div class="bar"><div style="width:${100 * a / total}%;background:var(--visitor)"></div><div style="width:${100 * b / total}%;background:var(--home)"></div></div></div><div class="v r">${esc(fmt(hs))}</div></div>`;
+  }).join("");
+}
+
+/* ---------------- Render: play-by-play ---------------- */
+const SHOT = { "3PTR": "3-pt jumper", JUMPER: "jumper", LAYUP: "layup", DUNK: "dunk", TIPIN: "tip-in", HOOK: "hook shot", FT: "free throw" };
+function playText(m, p) {
+  const el = p.el;
+  if (A(el, "text")) return A(el, "text");                 // football, soccer, etc. often include narrative text
+  const who = prettyName(A(el, "checkname"));
+  const teamName = (team(m, A(el, "vh")).name) || A(el, "team");
+  const act = A(el, "action").toUpperCase(), type = A(el, "type").toUpperCase();
+  const by = who && who !== "Team" ? who : teamName;
+  switch (act) {
+    case "GOOD": return `${by} made ${SHOT[type] || type.toLowerCase()}`;
+    case "MISS": return `${by} missed ${SHOT[type] || type.toLowerCase()}`;
+    case "REBOUND": return `${by} ${type === "OFF" ? "offensive" : type === "DEF" ? "defensive" : ""} rebound`.replace("  ", " ");
+    case "ASSIST": return `Assist by ${by}`;
+    case "STEAL": return `Steal by ${by}`;
+    case "BLOCK": return `Block by ${by}`;
+    case "TURNOVER": return `Turnover by ${by}${type ? " (" + type.toLowerCase() + ")" : ""}`;
+    case "FOUL": return `Foul on ${by}${type && type !== "PERS" ? " (" + type.toLowerCase() + ")" : ""}`;
+    case "TIMEOUT": return `Timeout ${teamName}${type ? " (" + type.toLowerCase() + ")" : ""}`;
+    case "SUB": return `${by} ${type === "IN" ? "subs in" : "subs out"}`;
+    default: return [by, act.toLowerCase(), type.toLowerCase()].filter(Boolean).join(" ");
+  }
+}
+
+function renderPlays(m) {
+  // period picker
+  const periods = [...new Set(m.plays.map(p => p.period))];
+  const sel = $("pbpPeriod"), cur = sel.value;
+  sel.innerHTML = `<option value="all">All periods</option>` + periods.map(p => `<option value="${esc(p)}">${esc(periodLabel(m, p) || "Period " + p)}</option>`).join("");
+  sel.value = periods.includes(cur) || cur === "all" ? cur : "all";
+
+  const scoringOnly = $("pbpScoring").checked;
+  let list = m.plays.filter(p => sel.value === "all" || p.period === sel.value);
+  list = list.map(p => ({ p, scoring: A(p.el, "action") === "GOOD" || A(p.el, "score") === "Y" || (A(p.el, "vscore") !== "" && A(p.el, "hscore") !== "") }));
+  if (scoringOnly) list = list.filter(x => x.scoring);
+  list.reverse();   // newest first
+
+  if (!list.length) { $("plays").innerHTML = `<li class="empty" style="display:block">No plays yet.</li>`; return; }
+  let html = "", lastPrd = null;
+  for (const { p, scoring } of list) {
+    if (p.period !== lastPrd) { html += `<li class="prd-head">${esc(periodLabel(m, p.period) || "Period " + p.period)}</li>`; lastPrd = p.period; }
+    const vh = A(p.el, "vh");
+    const sc = A(p.el, "vscore") !== "" ? `${A(p.el, "vscore")}-${A(p.el, "hscore")}` : "";
+    html += `<li class="${scoring ? "scoring" : ""}"><span class="tm">${esc(A(p.el, "time", A(p.el, "clock")))}</span><span class="stripe" style="background:${vh === "H" ? "var(--home)" : vh === "V" ? "var(--visitor)" : "transparent"}"></span><span class="txt">${esc(playText(m, p))}</span><span class="sc">${esc(sc)}</span></li>`;
+  }
+  $("plays").innerHTML = html;
+}
+
+/* ---------------- Main loop ---------------- */
+function renderAll() {
+  if (!model) return;
+  renderHeader(model); renderLinescore(model); renderBox(model); renderTeamStats(model); renderPlays(model);
+}
+
+function setConn(state, text) {
+  $("connDot").className = "dot " + state;
+  $("connText").textContent = text;
+}
+
+async function poll() {
+  try {
+    const sep = FEED.includes("?") ? "&" : "?";
+    const res = await fetch(FEED + sep + "t=" + Date.now(), { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const text = await res.text();
+    if (text !== lastText) {
+      model = parse(text);   // throws if the file was caught mid-write; we keep the last good copy
+      lastText = text;
+      renderAll();
+    }
+    lastOK = Date.now();
+    setConn("", "Updated " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" }));
+  } catch (e) {
+    const age = lastOK ? Math.round((Date.now() - lastOK) / 1000) : null;
+    setConn(model ? "stale" : "err", model ? `Reconnecting… (last update ${age}s ago)` : "Waiting for stats feed…");
+    console.warn("Live stats fetch failed:", e.message);
+  }
+}
+
+// Tabs
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
+  ui.tab = b.dataset.tab;
+  document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x === b));
+  ["box", "team", "pbp"].forEach(t => $("tab-" + t).classList.toggle("hidden", t !== ui.tab));
+});
+$("pbpPeriod").onchange = () => model && renderPlays(model);
+$("pbpScoring").onchange = () => model && renderPlays(model);
+
+// Poll only while the page is visible (saves requests when fans switch tabs), and refresh right away when they come back.
+document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+setInterval(() => { if (!document.hidden) poll(); }, CONFIG.POLL_SECONDS * 1000);
+poll();
+</script>
+</body>
+</html>
