@@ -206,7 +206,7 @@
    ===================================================================== */
 const CONFIG = {
   // Where the live XML lives. Can be overridden with ?feed=URL in the address bar.
-  // DATA_URL: "https://pub-46cba8c9ab194768b021576a7f12badd.r2.dev/fbgame.xml",
+  DATA_URL: "http://localhost:8000/feed/fbgame.xml",
   // How often to check for updates (seconds).
   POLL_SECONDS: 10,
   // Optional logo images, keyed by the team id in the XML (e.g. "RAV").
@@ -242,11 +242,14 @@ function prettyName(check) {
   const cap = s => s.toLowerCase().replace(/(^|[\s\-'])([a-z])/g, (m, a, b) => a + b.toUpperCase());
   return first ? `${cap(first)} ${cap(last)}` : cap(last);
 }
-function formalName(name) { // "Last, First" -> "First Last"
+function formalName(name) { // "Last,First" -> "First Last" (splits at the last comma so "Smith Jr.,Nick" works)
   if (!name) return "";
-  const p = name.split(",").map(s => s.trim());
-  return p.length > 1 ? `${p[1]} ${p[0]}` : name;
+  const i = name.lastIndexOf(",");
+  return i > 0 ? `${name.slice(i + 1).trim()} ${name.slice(0, i).trim()}` : name;
 }
+// Same, inside play-by-play sentences: catches "Wasik,Jackson", "Smith Jr.,Nicholas", "Bramble, Jr.,Mark", "McGee II,Michael"
+const NAME_IN_TEXT = /\b([A-Z][A-Za-z'\-]+(?:,? (?:Jr|Sr)\.?| (?:II|III|IV))?),([A-Z][A-Za-z'\-.]+)/g;
+function fixNamesInText(t) { return String(t || "").replace(NAME_IN_TEXT, "$2 $1"); }
 
 function parse(text) {
   const doc = new DOMParser().parseFromString(text, "application/xml");
@@ -284,10 +287,11 @@ function parse(text) {
   // Football: current down & distance / possession (IAU writes this at the end of <plays>)
   const dtg = playsRoot ? playsRoot.querySelector(":scope > downtogo") : null;
   const drives = [...root.querySelectorAll(":scope > drives > drive")];
-  return { sport, venue, rules, status, teams, plays, dtg, drives };
+  return { root, sport, venue, rules, status, teams, plays, dtg, drives };
 }
 
 /* ---------------- Labels ---------------- */
+function shortName(t) { return (t.abb && !/^[VH]$/.test(t.abb) ? t.abb : t.id) || t.name || ""; }
 const ORD = ["", "1st", "2nd", "3rd", "4th"];
 function numPeriods(m) { return parseInt(A(m.rules, "prds", A(m.rules, "qtrs", m.sport === "bbgame" ? "2" : "4")), 10) || 4; }
 function periodLabel(m, n) {
@@ -331,17 +335,17 @@ function renderHeader(m) {
   const started = m.plays.length > 0 || Number(v.score) + Number(h.score) > 0;
   let situ = "";
   $("vPoss").classList.add("hidden"); $("hPoss").classList.add("hidden");
-  if (complete) { $("period").textContent = "FINAL" + (parseInt(prd) > numPeriods(m) ? "/" + shortPeriod(m, prd) : ""); $("clock").textContent = ""; badge.textContent = "FINAL"; badge.className = "badge final"; }
-  else if (!started) { $("period").textContent = CONFIG.GAME_TIME || A(m.venue, "time", A(m.venue, "start", "")); $("clock").textContent = ""; badge.textContent = "PREGAME"; badge.className = "badge pre"; }
+  if (complete) { $("period").textContent = "FINAL" + (parseInt(prd) > numPeriods(m) ? "/" + shortPeriod(m, prd) : ""); $("clock").textContent = ""; badge.textContent = ""; badge.className = "badge final hidden"; }
+  else if (!started) { badge.classList.remove("hidden"); $("period").textContent = CONFIG.GAME_TIME || A(m.venue, "time", A(m.venue, "start", "")); $("clock").textContent = ""; badge.textContent = "PREGAME"; badge.className = "badge pre"; }
   else {
     $("period").textContent = periodLabel(m, prd);
     $("clock").textContent = clock === "00:00" ? "End" : clock.replace(/^0(\d)/, "$1");
-    badge.textContent = "LIVE"; badge.className = "badge";
+    badge.textContent = "LIVE"; badge.className = "badge";   // (also clears "hidden")
     if (d) {   // football down & distance + possession
       const poss = A(d, "hasball") === "H" || A(d, "id") === h.id ? "H" : "V";
       $(poss.toLowerCase() + "Poss").classList.remove("hidden");
       const down = parseInt(A(d, "down"), 10);
-      if (down >= 1 && down <= 4) situ = `${ORD[down]} & ${A(d, "togo")} at ${A(d, "spot")}`;
+      if (down >= 1 && down <= 4) situ = `${ORD[down]} & ${A(d, "togo") === "0" ? "Goal" : A(d, "togo")} at ${spotText(m, A(d, "spot"))}`;
     }
   }
   $("situ").textContent = situ;
@@ -358,7 +362,7 @@ function renderLinescore(m) {
   for (let i = 1; i <= n; i++) head += `<th>${esc(shortPeriod(m, i))}</th>`;
   head += `<th>T</th></tr>`;
   const row = (t, color) => {
-    let r = `<tr><td class="t"><span class="chip" style="background:${color}"></span><span class="full">${esc(t.name)}</span><span class="abbr">${esc(t.abb || t.id || t.name)}</span></td>`;
+    let r = `<tr><td class="t"><span class="chip" style="background:${color}"></span><span class="full">${esc(t.name)}</span><span class="abbr">${esc(shortName(t))}</span></td>`;
     for (let i = 0; i < n; i++) r += `<td>${esc(t.lines[i] ? t.lines[i].score : "")}</td>`;
     return r + `<td class="f">${esc(t.score)}</td></tr>`;
   };
@@ -385,7 +389,7 @@ const BB_COLS = [
 function renderBoxTeams(m) {
   const v = team(m, "V"), h = team(m, "H");
   $("boxTeams").innerHTML = [["V", v, "var(--visitor)"], ["H", h, "var(--home)"]].map(([vh, t, c]) =>
-    `<button data-vh="${vh}" class="${ui.boxTeam === vh ? "on" : ""}" style="${ui.boxTeam === vh ? "background:" + c : ""}"><span class="full">${esc(t.name)}</span><span class="abbr">${esc(t.abb || t.id || t.name)}</span></button>`).join("");
+    `<button data-vh="${vh}" class="${ui.boxTeam === vh ? "on" : ""}" style="${ui.boxTeam === vh ? "background:" + c : ""}"><span class="full">${esc(t.name)}</span><span class="abbr">${esc(shortName(t))}</span></button>`).join("");
   $("boxTeams").querySelectorAll("button").forEach(b => b.onclick = () => { ui.boxTeam = b.dataset.vh; renderBox(model); });
 }
 
@@ -405,7 +409,7 @@ const FB_SECTIONS = [
   ["Receiving", "rcv", [["REC", s => N(s, "no")], ["YDS", s => N(s, "yds")], ["AVG", s => avg(N(s, "yds"), N(s, "no"))], ["TD", s => N(s, "td")], ["LONG", s => N(s, "long")]], "yds"],
   ["Defense", "defense", [["SOLO", s => N(s, "tackua")], ["AST", s => N(s, "tacka")], ["TOT", s => N(s, "tot_tack") || N(s, "tackua") + N(s, "tacka")], ["TFL", s => N(s, "tflua") + N(s, "tfla") / 2], ["SACKS", s => N(s, "sacks") || N(s, "sackua") + N(s, "sacka") / 2], ["INT", s => N(s, "int")], ["PBU", s => N(s, "brup")], ["QBH", s => N(s, "qbh")], ["FF", s => N(s, "ff")], ["FR", s => N(s, "fr")]], "tot_tack"],
   ["Field goals", "fg", [["FG", s => `${N(s, "made")}-${N(s, "att")}`], ["LONG", s => N(s, "long")], ["BLKD", s => N(s, "blkd")]], "att"],
-  ["PATs", "pat", [["KICK", s => `${N(s, "kickmade")}-${N(s, "kickatt")}`]], "kickatt"],
+  ["PATs", "pat", [["KICK", s => `${N(s, "kickmade")}-${N(s, "kickatt")}`], ["2PT RUSH", s => `${N(s, "rushmade")}-${N(s, "rushatt")}`], ["2PT PASS", s => `${N(s, "passmade")}-${N(s, "passatt")}`]], "kickatt"],
   ["Punting", "punt", [["NO", s => N(s, "no")], ["YDS", s => N(s, "yds")], ["AVG", s => avg(N(s, "yds"), N(s, "no"))], ["LONG", s => N(s, "long")], ["IN20", s => N(s, "inside20")], ["TB", s => N(s, "tb")], ["50+", s => N(s, "plus50")]], "no"],
   ["Kickoffs", "ko", [["NO", s => N(s, "no")], ["YDS", s => N(s, "yds")], ["AVG", s => avg(N(s, "yds"), N(s, "no"))], ["TB", s => N(s, "tb")], ["OB", s => N(s, "ob")]], "no"],
   ["Kick returns", "kr", [["NO", s => N(s, "no")], ["YDS", s => N(s, "yds")], ["AVG", s => avg(N(s, "yds"), N(s, "no"))], ["TD", s => N(s, "td")], ["LONG", s => N(s, "long")]], "no"],
@@ -413,8 +417,73 @@ const FB_SECTIONS = [
   ["Interception returns", "ir", [["NO", s => N(s, "no")], ["YDS", s => N(s, "yds")], ["TD", s => N(s, "td")], ["LONG", s => N(s, "long")]], "no"],
 ];
 
+const HOW = { RUSH: "run", RUN: "run", PASS: "pass", REC: "pass", INT: "interception return", IR: "interception return", FUMB: "fumble return", FR: "fumble return", KR: "kickoff return", KO: "kickoff return", PR: "punt return", PUNT: "punt return", BLKP: "blocked punt return", BLKFG: "blocked FG return" };
+function fixName(n) { return formalName(String(n || "")); }
+
+// Build the scoring list: prefer the <scores> block (StatCrew / IAU / Presto); fall back to scoring plays.
+function scoringList(m) {
+  const root = m.root;
+  const out = [];
+  const sc = root ? [...root.querySelectorAll(":scope > scores > score")] : [];
+  if (sc.length) {
+    for (const s of sc) {
+      const type = A(s, "type").toUpperCase(), how = A(s, "how").toUpperCase();
+      const scorer = fixName(A(s, "scorer")), passer = fixName(A(s, "passer", A(s, "qb")));
+      const yds = A(s, "yds");
+      let desc;
+      if (type === "TD") {
+        const kind = HOW[how] || how.toLowerCase();
+        desc = `${scorer} ${yds ? yds + "-yd " : ""}${how === "PASS" ? "pass" + (passer ? " from " + passer : "") : kind}`;
+        let pt = A(s, "pattype").toLowerCase(), pr = A(s, "patres").toUpperCase();
+        if (!pt && !pr) {   // look up the try that followed this touchdown
+          const plays = [...root.querySelectorAll(":scope > plays play")];
+          const i = plays.findIndex(p => A(p, "clock") === A(s, "clock") && A(p, "score") === "Y" && (p.closest("qtr") ? A(p.closest("qtr"), "number") : "") === A(s, "qtr"));
+          const tryEl = i >= 0 ? plays.slice(i + 1, i + 4).find(p => p.querySelector("p_pat")) : null;
+          const pat = tryEl && tryEl.querySelector("p_pat");
+          if (pat) { pt = { K: "kick", P: "pass", R: "rush" }[A(pat, "type")] || "PAT"; pr = /good/i.test(A(pat, "result")) ? "GOOD" : "FAILED"; }
+        }
+        if (pt || pr) desc += pr === "GOOD" ? ` (${A(s, "patby") ? fixName(A(s, "patby")) + " " : ""}${pt === "kick" ? "kick" : pt + " good"})` : ` (${pt || "PAT"} failed)`;
+      } else if (type === "FG") desc = `${scorer} ${yds ? yds + "-yd " : ""}field goal`;
+      else if (type === "SAF") desc = `Safety${scorer ? " (" + scorer + ")" : ""}`;
+      else if (type === "PAT") desc = `${scorer} defensive PAT return (2 pts)`;
+      else desc = `${scorer} ${type.toLowerCase()}`;
+      const drive = [A(s, "plays") ? A(s, "plays") + (A(s, "plays") === "1" ? " play" : " plays") : "", A(s, "drive") ? A(s, "drive") + " yds" : "", A(s, "top") && A(s, "top") !== "0:00" ? A(s, "top") : ""].filter(Boolean).join(", ");
+      out.push({ vh: A(s, "vh"), qtr: A(s, "qtr"), clock: A(s, "clock"), desc, drive, score: A(s, "vscore") !== "" ? `${A(s, "vscore")}-${A(s, "hscore")}` : "" });
+    }
+    return out;
+  }
+  // Fallback: scoring plays, with the running score from the next <score V H> marker if present
+  const pending = [];
+  root && root.querySelectorAll(":scope > plays play, :scope > plays score").forEach(el => {
+    if (el.nodeName === "score") { pending.forEach(x => x.score = `${A(el, "V")}-${A(el, "H")}`); pending.length = 0; return; }
+    if (A(el, "type") === "X") return;   // PAT tries are folded into the TD line
+    const txt = A(el, "text");
+    if (A(el, "score") === "Y" || /touchdown|field goal.*\bgood\b|\bsafety\b/i.test(txt)) {
+      const q = el.closest("qtr");
+      const hb = A(el, "hasball"), h = team(m, "H");
+      const row = { vh: hb === h.id || hb === "H" ? "H" : "V", qtr: q ? A(q, "number") : "", clock: A(el, "clock"), desc: fixNamesInText(txt).replace(/, clock \d+:\d+\.?$/, ""), drive: "", score: "" };
+      out.push(row); pending.push(row);
+    }
+  });
+  return out;
+}
+
+function scoringSummaryHTML(m) {
+  const rows = scoringList(m);
+  let html = `<div class="sect"><h3>Scoring summary</h3>`;
+  if (!rows.length) return html + `<div class="empty" style="padding:10px 14px">No scoring yet.</div></div>`;
+  const v = team(m, "V"), h = team(m, "H");
+  html += `<div class="scroll"><table><tr><th>Qtr</th><th>Time</th><th class="l">Team</th><th class="l">Scoring play</th><th>${esc(shortName(v))}</th><th>${esc(shortName(h))}</th></tr>`;
+  for (const r of rows) {
+    const t = team(m, r.vh), color = r.vh === "H" ? "var(--home)" : "var(--visitor)";
+    const [vs, hs] = r.score ? r.score.split("-") : ["", ""];
+    html += `<tr><td>${esc(shortPeriod(m, r.qtr))}</td><td>${esc(r.clock)}</td><td class="l" style="font-weight:600"><span class="chip" style="background:${color}"></span>${esc(shortName(t))}</td><td class="l" style="white-space:normal;min-width:220px">${esc(r.desc)}${r.drive ? `<span class="dd">${esc(r.drive)}</span>` : ""}</td><td style="font-weight:${r.vh === "V" ? 800 : 400}">${esc(vs)}</td><td style="font-weight:${r.vh === "H" ? 800 : 400}">${esc(hs)}</td></tr>`;
+  }
+  return html + `</table></div></div>`;
+}
+
 function renderFootballBox(t) {
-  let html = "";
+  let html = scoringSummaryHTML(model) + `<h2 style="padding-top:16px">${esc(t.name)}</h2>`;
   for (const [title, tag, cols, sortKey] of FB_SECTIONS) {
     const rows = t.players.map(p => ({ p, s: p.querySelector(":scope > " + tag) })).filter(r => r.s);
     if (!rows.length) continue;
@@ -427,7 +496,7 @@ function renderFootballBox(t) {
     if (ts && rows.length > 1) html += `<tr class="tot"><td class="name">Team</td>${cols.map(c => `<td>${esc(c[1](ts))}</td>`).join("")}</tr>`;
     html += `</table></div></div>`;
   }
-  $("boxBody").innerHTML = html || `<div class="empty">No player stats yet.</div>`;
+  $("boxBody").innerHTML = html;
 }
 
 function renderBasketballBox(t) {
@@ -527,7 +596,7 @@ function playText(m, p) {
   const el = p.el;
   if (A(el, "text")) {                                     // football, soccer, etc. include narrative text
     // "Reardon,Patrick" -> "Patrick Reardon" (names have no space after the comma; sentence commas do)
-    return A(el, "text").replace(/\b([A-Z][A-Za-z'\-]+),([A-Z][A-Za-z'\-.]+)\b/g, "$2 $1");
+    return fixNamesInText(A(el, "text"));
   }
   const who = prettyName(A(el, "checkname"));
   const teamName = (team(m, A(el, "vh")).name) || A(el, "team");
@@ -562,8 +631,8 @@ function renderPlays(m) {
   const FB_SCORE = /touchdown|field goal.*\bgood\b|\bsafety\b|kick attempt.*\bgood\b|(rush|pass) attempt.*\bgood\b/i;
 
   let list = m.plays.filter(p => sel.value === "all" || p.period === sel.value)
-    .filter(p => !(fb && A(p.el, "tokens").startsWith("{DRIVE}")));   // IAU repeats drive starts as a play; we show <drivestart> instead
-  list = list.map(p => ({ p, scoring: p.kind === "play" && (fb ? FB_SCORE.test(A(p.el, "text")) : (A(p.el, "action") === "GOOD" || A(p.el, "score") === "Y" || (A(p.el, "vscore") !== "" && A(p.el, "hscore") !== ""))) }));
+    .filter(p => !(fb && (A(p.el, "tokens").startsWith("{DRIVE}") || /drive start at/i.test(A(p.el, "text")))));   // IAU repeats drive starts as a play; we show <drivestart> instead
+  list = list.map(p => ({ p, scoring: p.kind === "play" && (fb ? (A(p.el, "score") === "Y" || FB_SCORE.test(A(p.el, "text"))) : (A(p.el, "action") === "GOOD" || A(p.el, "score") === "Y" || (A(p.el, "vscore") !== "" && A(p.el, "hscore") !== ""))) }));
   if (scoringOnly) list = list.filter(x => x.scoring);
   list.reverse();   // newest first
 
@@ -571,7 +640,8 @@ function renderPlays(m) {
   let html = "", lastPrd = null;
   for (const { p, scoring } of list) {
     if (p.period !== lastPrd) { html += `<li class="prd-head">${esc(periodLabel(m, p.period) || "Period " + p.period)}</li>`; lastPrd = p.period; }
-    const side = fb && A(p.el, "type") === "#" && p.kind === "play" ? "" : sideOf(p.el);   // no team color on toss / quarter-start notes
+    const ptype = A(p.el, "type");
+    const side = fb && p.kind === "play" && (!ptype || ptype === "#") ? "" : sideOf(p.el);   // no team color on toss / quarter-start notes
     if (p.kind === "drivestart") {
       const tm = team(m, side);
       html += `<li class="drive">▲ ${esc(tm.name)} drive begins${A(p.el, "spot") ? " at " + esc(spotText(m, A(p.el, "spot"))) : ""}${A(p.el, "clock") ? " (" + esc(A(p.el, "clock")) + ")" : ""}</li>`;
@@ -579,9 +649,9 @@ function renderPlays(m) {
     }
     const sc = A(p.el, "vscore") !== "" ? `${A(p.el, "vscore")}-${A(p.el, "hscore")}` : "";
     let dd = "";
-    if (fb && A(p.el, "type") !== "#") {
+    if (fb && ptype && ptype !== "#" && ptype !== "X") {
       const down = parseInt(A(p.el, "down"), 10);
-      if (down >= 1 && down <= 4) dd = `${ORD[down]} & ${A(p.el, "togo")} at ${A(p.el, "spot")}`;
+      if (down >= 1 && down <= 4) dd = `${ORD[down]} & ${A(p.el, "togo") === "0" ? "Goal" : A(p.el, "togo")} at ${spotText(m, A(p.el, "spot"))}`;
     }
     html += `<li class="${scoring ? "scoring" : ""}"><span class="tm">${esc(A(p.el, "time", A(p.el, "clock")))}</span><span class="stripe" style="background:${side === "H" ? "var(--home)" : side === "V" ? "var(--visitor)" : "transparent"}"></span><span class="txt">${esc(playText(m, p))}${dd ? `<span class="dd">${esc(dd)}</span>` : ""}</span><span class="sc">${esc(sc)}</span></li>`;
   }
@@ -589,8 +659,24 @@ function renderPlays(m) {
 }
 // "V20" -> "URS20", "H35" -> "NDC35"
 function spotText(m, s) {
-  const mm = /^([VH])(\d+)$/.exec(s);
-  return mm ? (team(m, mm[1]).id || mm[1]) + mm[2] : s;
+  const sp = parseSpot(m, s);
+  if (!sp) return s || "";
+  if (sp.n === 50) return "50";
+  return sp.side ? `${shortName(team(m, sp.side))} ${sp.n}` : String(sp.n);
+}
+// Returns { side: "V"|"H"|"", n: yard line 0-50 } for spots like "URS25", "V25", "STATS235", "25"
+function parseSpot(m, raw) {
+  const str = String(raw || "").trim().toUpperCase();
+  if (!str) return null;
+  if (/^\d+$/.test(str)) return { side: "", n: parseInt(str, 10) };
+  const codes = [];
+  for (const vh of ["V", "H"]) { const t = team(m, vh); [t.id, t.abb, vh].filter(Boolean).forEach(c => codes.push([c.toUpperCase(), vh])); }
+  codes.sort((a, b) => b[0].length - a[0].length);   // longest code first, so "STATS2" wins over "STATS"
+  for (const [c, vh] of codes) {
+    if (str.startsWith(c)) { const rest = str.slice(c.length); if (/^\d{1,3}$/.test(rest)) { const n = parseInt(rest, 10); if (n <= 50) return { side: vh, n }; } }
+  }
+  const mm = /^([A-Z]*)(\d+)$/.exec(str);
+  return mm ? { side: "", n: parseInt(mm[2], 10) } : null;
 }
 
 /* ---------------- Render: football drives ---------------- */
@@ -599,13 +685,10 @@ const DRIVE_END = { TD: "Touchdown", FG: "Field goal", MFG: "Missed FG", FGA: "M
 
 // Yard line measured from the offense's own goal line (0-100). Accepts "URS20", "V20", "H35" or "20".
 function yardFromOwn(m, spot, side) {
-  const mm = /^([A-Za-z]*)(\d+)$/.exec(String(spot || "").trim());
-  if (!mm) return null;
-  const n = parseInt(mm[2], 10), pre = mm[1].toUpperCase();
-  if (!pre) return n;
-  const own = team(m, side);
-  const ownCodes = [side, own.id, own.abb].filter(Boolean).map(x => x.toUpperCase());
-  return ownCodes.includes(pre) ? n : 100 - n;
+  const sp = parseSpot(m, spot);
+  if (!sp) return null;
+  if (!sp.side) return sp.n;
+  return sp.side === side ? sp.n : 100 - sp.n;
 }
 function yardText(y) { if (y == null) return ""; if (y >= 100) return "End zone"; return y === 50 ? "50" : y < 50 ? `Own ${y}` : `Opp ${100 - y}`; }
 
@@ -618,7 +701,12 @@ function driveInfo(m, d, isLast) {
   const sy = yardFromOwn(m, st.spot, side);
   let ey = yardFromOwn(m, en.spot, side);
   if (live && isLast && m.dtg) ey = yardFromOwn(m, A(m.dtg, "spot"), side);   // drive in progress: use current ball spot
-  const endHow = en.how.toUpperCase();
+  let endHow = en.how.toUpperCase();
+  if (endHow === "HALF" && parseInt(en.qtr, 10) >= numPeriods(m)) endHow = "GAME";
+  if (endHow === "FGA") {   // field goal try: look up whether it was good
+    const fga = m.root && [...m.root.querySelectorAll(":scope > fgas > fga")].find(f => A(f, "qtr") === en.qtr && A(f, "clock") === en.time && (A(f, "vh") || side) === side);
+    endHow = fga && /good/i.test(A(fga, "result")) ? "FG" : "MFG";
+  }
   if (endHow === "TD") ey = 100;
   return { side, st, en, live, sy, ey, endHow, plays: N(d, "plays"), yards: N(d, "yards"), top: A(d, "top"), scoring: endHow === "TD" || endHow === "FG" };
 }
@@ -654,7 +742,7 @@ function renderDrives(m) {
     const bar = x.sy == null ? "" : `<div class="field"><span style="left:${lo}%;width:${Math.max(hi - lo, 1)}%;background:${color}"></span></div>`;
     const result = x.live ? `<span class="res-live">IN PROGRESS</span>` : esc(DRIVE_END[x.endHow] || x.en.how || "–");
     html += `<tr class="${x.scoring ? "score" : ""}">
-      <td class="name"><span class="chip" style="background:${color}"></span>${esc(t.abb || t.id)}</td>
+      <td class="name"><span class="chip" style="background:${color}"></span>${esc(shortName(t))}</td>
       <td>${esc(shortPeriod(m, x.st.qtr))}</td>
       <td class="l">${esc(DRIVE_START[x.st.how.toUpperCase()] || x.st.how)}${x.st.time ? ` <span style="color:var(--muted)">${esc(x.st.time)}</span>` : ""}</td>
       <td>${esc(yardText(x.sy))}</td>
@@ -712,7 +800,7 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) poll
 function nextDelay() {
   const b = $("badge").textContent;
   if (model && b === "PREGAME") return 60 * 1000;
-  if (model && b === "FINAL") return 5 * 60 * 1000;
+  if (model && $("period").textContent.startsWith("FINAL")) return 5 * 60 * 1000;
   return CONFIG.POLL_SECONDS * 1000;
 }
 async function loop() { if (!document.hidden) await poll(); setTimeout(loop, nextDelay()); }
