@@ -100,6 +100,19 @@
   .prd-head { background: #f9fafb; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 6px 14px !important; display: block !important; }
   .empty { padding: 24px; text-align: center; color: var(--muted); }
 
+  .drv-sum { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 4px 14px 14px; }
+  .drv-team { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .drv-team b { display: block; margin-bottom: 6px; }
+  .drv-team dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 0; font-size: 13.5px; }
+  .drv-team dt { color: var(--muted); } .drv-team dd { margin: 0; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+  table.drv td { font-size: 13.5px; }
+  table.drv tr.score td { background: #fefce8; font-weight: 600; }
+  table.drv tr.score td.name { background: #fefce8; }
+  .res-live { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .06em; color: #fff; background: var(--live); border-radius: 99px; padding: 1px 6px; }
+  .field { position: relative; width: 120px; height: 12px; background: #dcfce7; border-radius: 3px; overflow: hidden; }
+  .field::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; border-left: 1px dashed #86efac; }
+  .field span { position: absolute; top: 2px; bottom: 2px; border-radius: 2px; min-width: 3px; }
+  @media (max-width: 640px) { .drv-sum { grid-template-columns: 1fr; } }
   .hidden { display: none !important; }
   .abbr { display: none; }
   footer { text-align: center; color: var(--muted); font-size: 12px; padding: 10px 0 24px; }
@@ -116,6 +129,7 @@
     .side.home { flex-direction: column; text-align: center; }
     .score, .side.home .score { margin: 0; }
     th, td { padding: 6px 6px; font-size: 13.5px; }
+    .tabs button { font-size: 13px; padding: 9px 2px; }
     .full { display: none; }
     .abbr { display: inline; }
   }
@@ -154,6 +168,7 @@
     <button class="on" data-tab="box">Box Score</button>
     <button data-tab="team">Team Stats</button>
     <button data-tab="pbp">Play-by-Play</button>
+    <button data-tab="drives" id="drivesTab" class="hidden">Drives</button>
   </div>
 
   <section id="tab-box">
@@ -177,6 +192,11 @@
     </div>
   </section>
 
+  <section id="tab-drives" class="hidden">
+    <div class="card"><h2>Drive summary</h2><div class="drv-sum" id="drvSum"></div></div>
+    <div class="card"><h2>Drive chart</h2><div class="scroll"><table class="drv" id="drives"></table></div></div>
+  </section>
+
   <footer>Updates automatically every few seconds — no need to refresh.</footer>
 </div>
 
@@ -186,7 +206,7 @@
    ===================================================================== */
 const CONFIG = {
   // Where the live XML lives. Can be overridden with ?feed=URL in the address bar.
-  // DATA_URL: "https://pub-46cba8c9ab194768b021576a7f12badd.r2.dev/fbgame.xml",
+  DATA_URL: "https://pub-46cba8c9ab194768b021576a7f12badd.r2.dev/fbgame.xml",
   // How often to check for updates (seconds).
   POLL_SECONDS: 10,
   // Optional logo images, keyed by the team id in the XML (e.g. "RAV").
@@ -194,10 +214,12 @@ const CONFIG = {
   LOGOS: {
     "URS": "logos/ursuline.png",
     "NDC": "logos/ndcl.png",
-    // "RAV": "logos/ravenna.png",
   },
   // Page title prefix
   TITLE: "Live Stats",
+  // Optional: show these instead of the date / start time in the XML (leave "" to use the XML)
+  GAME_DATE: "11/20/2026",
+  GAME_TIME: "7:30 PM",
 };
 /* ===================================================================== */
 
@@ -261,7 +283,8 @@ function parse(text) {
   }
   // Football: current down & distance / possession (IAU writes this at the end of <plays>)
   const dtg = playsRoot ? playsRoot.querySelector(":scope > downtogo") : null;
-  return { sport, venue, rules, status, teams, plays, dtg };
+  const drives = [...root.querySelectorAll(":scope > drives > drive")];
+  return { sport, venue, rules, status, teams, plays, dtg, drives };
 }
 
 /* ---------------- Labels ---------------- */
@@ -309,7 +332,7 @@ function renderHeader(m) {
   let situ = "";
   $("vPoss").classList.add("hidden"); $("hPoss").classList.add("hidden");
   if (complete) { $("period").textContent = "FINAL" + (parseInt(prd) > numPeriods(m) ? "/" + shortPeriod(m, prd) : ""); $("clock").textContent = ""; badge.textContent = "FINAL"; badge.className = "badge final"; }
-  else if (!started) { $("period").textContent = A(m.venue, "time", A(m.venue, "start", "")); $("clock").textContent = ""; badge.textContent = "PREGAME"; badge.className = "badge pre"; }
+  else if (!started) { $("period").textContent = CONFIG.GAME_TIME || A(m.venue, "time", A(m.venue, "start", "")); $("clock").textContent = ""; badge.textContent = "PREGAME"; badge.className = "badge pre"; }
   else {
     $("period").textContent = periodLabel(m, prd);
     $("clock").textContent = clock === "00:00" ? "End" : clock.replace(/^0(\d)/, "$1");
@@ -325,7 +348,7 @@ function renderHeader(m) {
   document.title = `${v.id || v.name} ${v.score}, ${h.id || h.name} ${h.score} | ${CONFIG.TITLE}`;
 
   const ven = m.venue;
-  $("venue").textContent = [A(ven, "date"), A(ven, "stadium") || A(ven, "location"), A(ven, "stadium") ? A(ven, "location") : "", parseInt(A(ven, "attend")) ? "Att: " + A(ven, "attend") : ""].filter(Boolean).join(" · ");
+  $("venue").textContent = [CONFIG.GAME_DATE || A(ven, "date"), A(ven, "stadium") || A(ven, "location"), A(ven, "stadium") ? A(ven, "location") : "", parseInt(A(ven, "attend")) ? "Att: " + A(ven, "attend") : ""].filter(Boolean).join(" · ");
 }
 
 function renderLinescore(m) {
@@ -570,10 +593,83 @@ function spotText(m, s) {
   return mm ? (team(m, mm[1]).id || mm[1]) + mm[2] : s;
 }
 
+/* ---------------- Render: football drives ---------------- */
+const DRIVE_START = { KO: "Kickoff", ONSIDE: "Onside kick", PUNT: "Punt", INT: "Interception", FUMB: "Fumble", DOWNS: "Downs", MFG: "Missed FG", FGA: "Missed FG", BLKP: "Blocked punt", BLKFG: "Blocked FG", SAF: "Safety kick" };
+const DRIVE_END = { TD: "Touchdown", FG: "Field goal", MFG: "Missed FG", FGA: "Missed FG", PUNT: "Punt", DOWNS: "Downs", INT: "Interception", FUMB: "Fumble", HALF: "End of half", GAME: "End of game", SAF: "Safety", BLKP: "Blocked punt", BLKFG: "Blocked FG" };
+
+// Yard line measured from the offense's own goal line (0-100). Accepts "URS20", "V20", "H35" or "20".
+function yardFromOwn(m, spot, side) {
+  const mm = /^([A-Za-z]*)(\d+)$/.exec(String(spot || "").trim());
+  if (!mm) return null;
+  const n = parseInt(mm[2], 10), pre = mm[1].toUpperCase();
+  if (!pre) return n;
+  const own = team(m, side);
+  const ownCodes = [side, own.id, own.abb].filter(Boolean).map(x => x.toUpperCase());
+  return ownCodes.includes(pre) ? n : 100 - n;
+}
+function yardText(y) { if (y == null) return ""; if (y >= 100) return "End zone"; return y === 50 ? "50" : y < 50 ? `Own ${y}` : `Opp ${100 - y}`; }
+
+function driveInfo(m, d, isLast) {
+  const sp = A(d, "start").split(","), ep = A(d, "end").split(",");
+  const side = A(d, "vh") || (A(d, "team") === team(m, "H").id ? "H" : "V");
+  const st = { how: A(d, "start_how", sp[0] || ""), qtr: A(d, "start_qtr", sp[1] || ""), time: A(d, "start_time", sp[2] || ""), spot: A(d, "start_spot", sp[3] || "") };
+  const en = { how: A(d, "end_how", ep[0] || ""), qtr: A(d, "end_qtr", ep[1] || ""), time: A(d, "end_time", ep[2] || ""), spot: A(d, "end_spot", ep[3] || "") };
+  const live = !en.how && (!en.qtr || en.qtr === "0");
+  const sy = yardFromOwn(m, st.spot, side);
+  let ey = yardFromOwn(m, en.spot, side);
+  if (live && isLast && m.dtg) ey = yardFromOwn(m, A(m.dtg, "spot"), side);   // drive in progress: use current ball spot
+  const endHow = en.how.toUpperCase();
+  if (endHow === "TD") ey = 100;
+  return { side, st, en, live, sy, ey, endHow, plays: N(d, "plays"), yards: N(d, "yards"), top: A(d, "top"), scoring: endHow === "TD" || endHow === "FG" };
+}
+const secs = t => { const [a, b] = String(t || "0:0").split(":").map(Number); return (a || 0) * 60 + (b || 0); };
+const mmss = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
+function renderDrives(m) {
+  const isFb = m.sport === "fbgame";
+  $("drivesTab").classList.toggle("hidden", !isFb);
+  if (!isFb) return;
+  const list = m.drives.map((d, i) => driveInfo(m, d, i === m.drives.length - 1));
+
+  // Per-team summary
+  $("drvSum").innerHTML = ["V", "H"].map(vh => {
+    const t = team(m, vh), ds = list.filter(x => x.side === vh);
+    const starts = ds.map(x => x.sy).filter(y => y != null);
+    const avgStart = starts.length ? Math.round(starts.reduce((a, b) => a + b, 0) / starts.length) : null;
+    const td = ds.filter(x => x.endHow === "TD").length, fg = ds.filter(x => x.endHow === "FG").length;
+    const color = vh === "H" ? "var(--home)" : "var(--visitor)";
+    return `<div class="drv-team" style="border-top:4px solid ${color}"><b>${esc(t.name)}</b><dl>
+      <dt>Drives</dt><dd>${ds.length}</dd>
+      <dt>Touchdowns / FGs</dt><dd>${td} / ${fg}</dd>
+      <dt>Avg. start</dt><dd>${esc(yardText(avgStart) || "–")}</dd>
+      <dt>Plays / yards</dt><dd>${ds.reduce((a, x) => a + x.plays, 0)} / ${ds.reduce((a, x) => a + x.yards, 0)}</dd>
+      <dt>Time on drives</dt><dd>${mmss(ds.reduce((a, x) => a + secs(x.top), 0))}</dd></dl></div>`;
+  }).join("");
+
+  if (!list.length) { $("drives").innerHTML = `<tr><td class="empty">No drives yet.</td></tr>`; return; }
+  let html = `<tr><th class="name l">Team</th><th>Qtr</th><th class="l">How started</th><th>Start</th><th>Plays</th><th>Yds</th><th>TOP</th><th class="l">Result</th><th>End</th><th class="l">Field</th></tr>`;
+  for (const x of list.slice().reverse()) {   // newest first
+    const t = team(m, x.side), color = x.side === "H" ? "var(--home)" : "var(--visitor)";
+    const lo = Math.min(x.sy ?? 0, x.ey ?? x.sy ?? 0), hi = Math.max(x.sy ?? 0, x.ey ?? x.sy ?? 0);
+    const bar = x.sy == null ? "" : `<div class="field"><span style="left:${lo}%;width:${Math.max(hi - lo, 1)}%;background:${color}"></span></div>`;
+    const result = x.live ? `<span class="res-live">IN PROGRESS</span>` : esc(DRIVE_END[x.endHow] || x.en.how || "–");
+    html += `<tr class="${x.scoring ? "score" : ""}">
+      <td class="name"><span class="chip" style="background:${color}"></span>${esc(t.abb || t.id)}</td>
+      <td>${esc(shortPeriod(m, x.st.qtr))}</td>
+      <td class="l">${esc(DRIVE_START[x.st.how.toUpperCase()] || x.st.how)}${x.st.time ? ` <span style="color:var(--muted)">${esc(x.st.time)}</span>` : ""}</td>
+      <td>${esc(yardText(x.sy))}</td>
+      <td>${x.plays}</td><td>${x.yards}</td><td>${esc(x.top)}</td>
+      <td class="l">${result}${!x.live && x.en.time ? ` <span style="color:var(--muted)">${esc(x.en.time)}</span>` : ""}</td>
+      <td>${x.live ? "" : esc(yardText(x.ey))}</td>
+      <td class="l">${bar}</td></tr>`;
+  }
+  $("drives").innerHTML = html;
+}
+
 /* ---------------- Main loop ---------------- */
 function renderAll() {
   if (!model) return;
-  renderHeader(model); renderLinescore(model); renderBox(model); renderTeamStats(model); renderPlays(model);
+  renderHeader(model); renderLinescore(model); renderBox(model); renderTeamStats(model); renderPlays(model); renderDrives(model);
 }
 
 function setConn(state, text) {
@@ -605,13 +701,15 @@ async function poll() {
 document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
   ui.tab = b.dataset.tab;
   document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x === b));
-  ["box", "team", "pbp"].forEach(t => $("tab-" + t).classList.toggle("hidden", t !== ui.tab));
+  ["box", "team", "pbp", "drives"].forEach(t => $("tab-" + t).classList.toggle("hidden", t !== ui.tab));
 });
 $("pbpPeriod").onchange = () => model && renderPlays(model);
 $("pbpScoring").onchange = () => model && renderPlays(model);
 
 // Poll only while the page is visible (saves requests when fans switch tabs), and refresh right away when they come back.
-document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });function nextDelay() {
+document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+// Check often only while the game is live: once a minute before kickoff, every 5 minutes after the final.
+function nextDelay() {
   const b = $("badge").textContent;
   if (model && b === "PREGAME") return 60 * 1000;
   if (model && b === "FINAL") return 5 * 60 * 1000;
