@@ -7,8 +7,8 @@
 <style>
   /* ====== COLORS: change these to your school's colors ====== */
   :root {
-    --home: #b3121f;        /* home team color */
-    --visitor: #1f3a93;     /* visitor team color */
+    --home: #2c58a7;        /* home team color */
+    --visitor: #0b4d43;     /* visitor team color */
     --bg: #f3f4f6;
     --card: #ffffff;
     --ink: #111827;
@@ -611,9 +611,14 @@ $("pbpPeriod").onchange = () => model && renderPlays(model);
 $("pbpScoring").onchange = () => model && renderPlays(model);
 
 // Poll only while the page is visible (saves requests when fans switch tabs), and refresh right away when they come back.
-document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
-setInterval(() => { if (!document.hidden) poll(); }, CONFIG.POLL_SECONDS * 1000);
-poll();
+document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });function nextDelay() {
+  const b = $("badge").textContent;
+  if (model && b === "PREGAME") return 60 * 1000;
+  if (model && b === "FINAL") return 5 * 60 * 1000;
+  return CONFIG.POLL_SECONDS * 1000;
+}
+async function loop() { if (!document.hidden) await poll(); setTimeout(loop, nextDelay()); }
+loop();
 </script>
 </body>
 </html>
